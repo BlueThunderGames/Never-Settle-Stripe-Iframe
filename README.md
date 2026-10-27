@@ -1,26 +1,31 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Stripe Payment Trial
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+An embeddable invoice payment form, built to sit in an iframe on a Webflow site. A customer enters an invoice number, a payment amount and a payment method (card or ACH). A **processing fee** is calculated on the server and added to the total, so the client receives the full invoice amount after Stripe takes its cut.
 
-## Stripe Payment Trial
+> **Status: proof of concept.** The form, fee calculation, quote API and payment attempt tracking are built. Creating the Stripe PaymentIntent, the return/confirmation page and iframe embedding headers are still to come (see [Status](#status)).
 
-An embeddable (iframe) invoice payment form. The customer enters an invoice number, amount and payment type (card or ACH), and a processing fee is added on top so the invoice is covered after Stripe's fees. Amounts are handled as integer cents, which is also the unit the Stripe API expects (`amount=1099` is $10.99).
+## Contents
 
-### Fees
+- [How it works](#how-it-works)
+- [Fees](#fees)
+- [Getting started](#getting-started)
+- [Configuration](#configuration)
+- [Running the tests](#running-the-tests)
+- [API](#api)
+- [Project structure](#project-structure)
+- [Status](#status)
+- [Known limitations](#known-limitations)
 
-Rates live in `config/payments.php` and can be overridden in `.env`.
+## How it works
 
-| Method | Stripe's fee | What we add |
-|---|---|---|
-| Card | 2.9% + 30¢ | Fee grossed up so the invoice is covered (optional ceiling, see below) |
-| ACH | 0.8%, max $5.00 | Fee grossed up, capped at $5.00 |
+1. The customer enters an invoice number and amount and picks card or ACH.
+2. Each time the amount or method changes, the form asks the server for a quote. The server validates the input, calculates the fee and returns the amount, fee and total, which the form displays.
+3. The customer continues to payment, which creates a payment attempt on the server and mounts Stripe's Payment Element.
+4. The customer pays, and sees a confirmation suited to the method they chose.
 
-### How the fee is calculated
+All money is handled as **integer cents**, never floats. This avoids rounding errors, and cents are also what the Stripe API expects (`amount=1099` is $10.99). The server always works out the price itself. It never trusts a total sent from the browser.
+
+## Fees
 
 Stripe takes its fee from the total we charge, not from the invoice amount, so the fee has to be calculated on the total:
 
@@ -29,7 +34,12 @@ card:  total = (invoice + 30¢) ÷ 0.971
 ach:   total = invoice ÷ 0.992        (fee capped at $5.00)
 ```
 
-The total is **rounded up to the next cent** using integer cents and ceiling division (no floats), so we never round down and come up a fraction of a cent short. Examples:
+The total is **rounded up to the next cent** using integer ceiling division, so we never round down and come up a fraction of a cent short.
+
+| Method | Stripe's fee | What we add |
+|---|---|---|
+| Card | 2.9% + 30¢ | Fee grossed up so the invoice is covered |
+| ACH | 0.8%, max $5.00 | Fee grossed up, capped at $5.00 |
 
 | Invoice | Method | Total charged | Fee added |
 |---|---|---|---|
@@ -38,66 +48,143 @@ The total is **rounded up to the next cent** using integer cents and ceiling div
 
 Stripe rounds its own fee to whole cents, so the merchant's net can differ from the invoice by a cent. The round-up is deliberately conservative, so it never lands short.
 
-### Decision: no 3% ceiling on card surcharges (needs review before going live)
+### Decision: card surcharges are not capped by default
 
-The goal of the fee is to break even. Stripe's [surcharging guide](https://docs.stripe.com/payments/cards/surcharge) says US card surcharges are limited to **3%** (credit cards only), and card network rules and state laws apply on top. Fully covering a 2.9% + 30¢ fee takes more than 3% of the invoice below about **$2,308**, because the fixed 30¢ is a large share of a small invoice (about 6.1% on a $10 invoice). Capping at 3% means the merchant absorbs the difference, up to about 31¢ per card payment, so breaking even isn't possible within the limit on small invoices.
+Stripe's [surcharging guide](https://docs.stripe.com/payments/cards/surcharge) says US card surcharges are limited to **3%** (credit cards only), and card network rules and state laws apply on top. Fully covering a 2.9% + 30¢ fee takes more than 3% of the invoice below about **$2,308**, because the fixed 30¢ is a large share of a small invoice (about 6.1% on a $10 invoice). Capping at 3% would leave the merchant absorbing the difference, up to about 31¢ per card payment.
 
-For this trial we calculate the full cost-recovery fee and **do not enforce the 3% limit by default**. This is an estimate for the demo, not confirmation that the fee can legally be charged. To enforce the limit and accept the shortfall instead, set `PAYMENTS_CARD_MAX_SURCHARGE_PERCENT=3.0` in `.env`. ACH is not affected. Other options, such as a card minimum with small invoices steered to ACH, or cash-discount pricing, remain open.
+The goal of this trial is for the client to break even, so the full cost-recovery fee is calculated and the 3% limit is **not enforced by default**. This is an estimate for the demo, not confirmation that the fee can legally be charged. To enforce the limit and accept the shortfall instead, set `PAYMENTS_CARD_MAX_SURCHARGE_PERCENT=3.0`. ACH is not affected. **Get the surcharge rules reviewed before using this in production.**
 
-Left out of this proof of concept:
+## Getting started
 
-- Sending the fee to Stripe as a surcharge (`amount_details[surcharge]`, a preview API) with receipts showing the subtotal and surcharge separately. The fee is currently only part of the total charged.
-- Debit cards. US law and Stripe allow surcharges on credit cards only, and we can't tell credit from debit until the customer enters the card.
-- Checking whether surcharging is permitted in the customer's state, and any required registration with the card networks. This needs a professional review before going live.
-- Webhooks. Payment status is read from Stripe when the customer returns, so an ACH payment can stay `processing` until it's checked again.
+### Requirements
 
-## About Laravel
+- PHP 8.2 or newer (with the `sqlite3` and `mbstring` extensions)
+- [Composer](https://getcomposer.org)
+- Node.js 20.19 or newer (or 22.12+), with npm
+- A [Stripe](https://dashboard.stripe.com/register) account (test mode is fine)
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+### Setup
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+```bash
+git clone <repository-url>
+cd stripe-payment-trial
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+composer run setup
+```
 
-## Learning Laravel
+`composer run setup` installs the PHP and JavaScript dependencies, creates your `.env` file, generates the app key, creates the SQLite database and runs the migrations, and builds the front-end assets.
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+Then add your Stripe **test** keys to `.env` (from the Stripe dashboard under Developers → API keys):
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+```env
+STRIPE_KEY=pk_test_...
+STRIPE_SECRET=sk_test_...
+```
 
-## Laravel Sponsors
+### Run it
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+```bash
+composer run dev
+```
 
-### Premium Partners
+This starts the web server, queue worker, log viewer and Vite together. Open <http://localhost:8000>.
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+If you only want the app without the extra processes, run `php artisan serve` and `npm run dev` in two terminals.
 
-## Contributing
+## Configuration
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+Everything is set in `.env`. The defaults match the rates above, so you only need to set these to change them.
 
-## Code of Conduct
+| Variable | Default | Purpose |
+|---|---|---|
+| `STRIPE_KEY` | | Stripe publishable key (`pk_…`). Safe to expose in the browser. |
+| `STRIPE_SECRET` | | Stripe secret key (`sk_…`). Server-side only; never commit it. |
+| `PAYMENTS_CARD_FEE_PERCENT` | `2.9` | Card percentage rate |
+| `PAYMENTS_CARD_FEE_FIXED_CENTS` | `30` | Card fixed fee, in cents |
+| `PAYMENTS_CARD_MAX_SURCHARGE_PERCENT` | *(unset)* | Optional ceiling on the card fee as a % of the invoice, for example `3.0` |
+| `PAYMENTS_ACH_FEE_PERCENT` | `0.8` | ACH percentage rate |
+| `PAYMENTS_ACH_FEE_CAP_CENTS` | `500` | ACH fee cap, in cents |
+| `PAYMENTS_MIN_AMOUNT_CENTS` | `50` | Smallest invoice accepted ($0.50, Stripe's minimum) |
+| `PAYMENTS_MAX_AMOUNT_CENTS` | `99999999` | Largest invoice accepted ($999,999.99) |
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+Rates and limits live in `config/payments.php`.
 
-## Security Vulnerabilities
+## Running the tests
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+```bash
+composer test
+```
 
-## License
+The tests use an in-memory database and don't call Stripe. They cover amount parsing, the fee calculation (including rounding boundaries and the ACH cap), the quote endpoint's validation and responses, and the idempotent creation of payment attempts.
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+## API
+
+### `POST /payments/quote`
+
+Prices an invoice amount for a payment method. Requests must be JSON and include a CSRF token (the form sends one automatically). Limited to 60 requests per minute.
+
+Request:
+
+```json
+{ "amount": "1,000.50", "payment_type": "card" }
+```
+
+- `amount`: dollars as a string or number. `1,000.50`, `$12` and `19.99` are accepted. More than 2 decimals is rejected.
+- `payment_type`: `card` or `ach`.
+
+Response `200`:
+
+```json
+{ "amount_cents": 100050, "fee_cents": 3020, "total_cents": 103070 }
+```
+
+Invalid input returns `422` with the standard validation error format:
+
+```json
+{
+  "message": "The minimum payment is $0.50.",
+  "errors": { "amount": ["The minimum payment is $0.50."] }
+}
+```
+
+## Project structure
+
+| Path | What it does |
+|---|---|
+| `app/Services/MoneyParser.php` | Turns user-entered dollars into integer cents |
+| `app/Services/FeeCalculator.php` | Calculates the processing fee for card and ACH |
+| `app/Services/PaymentAttemptService.php` | Creates a payment attempt, or returns the existing one for the same idempotency key |
+| `app/Services/StripePaymentService.php` | Stripe PaymentIntent handling (not built yet) |
+| `app/Http/Requests/PaymentQuoteRequest.php` | Validation for the quote endpoint |
+| `app/Http/Controllers/PaymentController.php` | Form page and quote endpoint |
+| `app/Models/PaymentAttempt.php` | A single payment attempt and its Stripe status |
+| `app/Enums/PaymentAttemptStatus.php` | Attempt statuses, mirroring Stripe's PaymentIntent statuses |
+| `config/payments.php` | Fee rates, limits and currency |
+| `resources/views/payments/form.blade.php` | The payment form |
+| `resources/js/payment-form.js` | Live quoting and the two-step payment flow |
+
+### Idempotency
+
+Every payment attempt has a unique idempotency key. Retrying or double-submitting with the same key returns the same attempt instead of creating a second one. Reusing a key with a different invoice number, amount or payment method is rejected. A retry keeps its original pricing even if the rates change in the meantime.
+
+## Status
+
+**Built**
+
+- Payment form and iframe layout
+- Live fee quotes from the server, with client-side and server-side validation
+- Fee calculation for card and ACH
+- Payment attempt model, with idempotent creation
+
+**Still to do**
+
+- Create the Stripe PaymentIntent for an attempt (invoice number, amount and fee in its metadata and description, so payments can be matched to invoices by hand in Stripe)
+- The `/payments/attempts` endpoint the form calls to start payment
+- The return page. A card shows paid or failed. ACH shows "submitted, may take a few business days", because bank payments don't settle instantly.
+- Headers that allow the page to be embedded in the Webflow site, and cookie settings that work inside an iframe
+
+## Known limitations
+
+- **No webhooks.** Payment status is read from Stripe when the customer returns to the site. A customer who closes the tab first leaves the attempt stale, and an ACH payment stays `processing` until it's checked again.
+- **No invoice system integration.** The invoice number is stored as plain text. Matching payments to invoices is done manually in Stripe.
+- **Card surcharge rules.** See [the decision above](#decision-card-surcharges-are-not-capped-by-default). The fee is currently included in the total charged and isn't sent to Stripe as a separate surcharge, and debit cards aren't distinguished from credit cards.
