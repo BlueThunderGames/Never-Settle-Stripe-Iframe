@@ -12,10 +12,14 @@ class PaymentAttempt extends Model
 
     protected $guarded = ['id', 'public_id'];
 
+    // Never serialize the secret by accident.
+    protected $hidden = ['client_secret'];
+
     protected function casts(): array
     {
         return [
             'status' => PaymentAttemptStatus::class,
+            'client_secret' => 'encrypted',
             'amount_cents' => 'integer',
             'fee_cents' => 'integer',
             'total_cents' => 'integer',

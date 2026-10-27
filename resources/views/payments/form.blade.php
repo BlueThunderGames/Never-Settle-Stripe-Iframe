@@ -50,6 +50,7 @@
             data-stripe-key="{{ config('services.stripe.key') }}"
             data-quote-url="{{ url('/payments/quote') }}"
             data-intent-url="{{ url('/payments/attempts') }}"
+            data-return-url="{{ url('/payments/return') }}"
         >
             @csrf
 

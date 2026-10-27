@@ -28,10 +28,15 @@ function initPaymentForm(form) {
     const urls = {
         quote: form.dataset.quoteUrl,
         intent: form.dataset.intentUrl,
+        return: form.dataset.returnUrl,
     };
 
     const AMOUNT_PATTERN = /^\d{1,3}(,?\d{3})*(\.\d{1,2})?$|^\.\d{1,2}$/;
     const QUOTE_DEBOUNCE_MS = 350;
+    // Just over the job's longest retry schedule (2 + 5 + 15 + 45 seconds of backoff).
+    const POLL_TIMEOUT_MS = 75_000;
+    const POLL_FAST_MS = 700;
+    const POLL_SLOW_MS = 1500;
     const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
 
     // Per-method behaviour for the step after the details are entered.
@@ -56,7 +61,11 @@ function initPaymentForm(form) {
         quotePromise: Promise.resolve(),
         stripe: null,
         elements: null,
-        returnUrl: null,
+        // One idempotency key per payment attempt. Reused on a retry of the same details, so
+        // the server hands back the same attempt; replaced when the details change or it fails.
+        idempotencyKey: null,
+        detailsFingerprint: null,
+        attemptId: null,
         busy: false,
     };
 
@@ -100,7 +109,7 @@ function initPaymentForm(form) {
                 : method.continueLabel;
     }
 
-    async function request(url, payload, signal) {
+    async function request(url, payload, signal, headers = {}) {
         const response = await fetch(url, {
             method: 'POST',
             signal,
@@ -109,19 +118,63 @@ function initPaymentForm(form) {
                 Accept: 'application/json',
                 'X-CSRF-TOKEN': csrf,
                 'X-Requested-With': 'XMLHttpRequest',
+                ...headers,
             },
             body: JSON.stringify(payload),
         });
 
+        return parseResponse(response);
+    }
+
+    async function getJson(url) {
+        const response = await fetch(url, {
+            headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+            cache: 'no-store',
+        });
+
+        return parseResponse(response);
+    }
+
+    async function parseResponse(response) {
         const data = await response.json().catch(() => ({}));
 
         if (!response.ok) {
             const error = new Error(data.message || 'Something went wrong. Please try again.');
             error.errors = data.errors ?? {};
+            error.status = response.status;
             throw error;
         }
 
         return data;
+    }
+
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    // The server creates the Stripe PaymentIntent in a background job, so wait for it.
+    async function waitUntilReady(attemptId) {
+        const deadline = Date.now() + POLL_TIMEOUT_MS;
+
+        for (let poll = 0; Date.now() < deadline; poll++) {
+            const attempt = await getJson(`${urls.intent}/${attemptId}`);
+
+            if (attempt.state === 'ready') return attempt;
+
+            if (attempt.state === 'failed') {
+                const error = new Error(attempt.message);
+                error.startOver = true;
+                throw error;
+            }
+
+            if (attempt.state === 'done') {
+                const error = new Error('This payment has already been submitted.');
+                error.startOver = true;
+                throw error;
+            }
+
+            await sleep(poll < 5 ? POLL_FAST_MS : POLL_SLOW_MS);
+        }
+
+        throw new Error('This is taking longer than expected. Please try again in a moment.');
     }
 
     // Runs whenever the amount or payment method changes.
@@ -206,28 +259,49 @@ function initPaymentForm(form) {
             }
             if (!state.quote || state.quoteKey !== key) return;
 
-            const intent = await request(urls.intent, {
+            const details = {
                 invoice_number: el.invoice.value.trim(),
                 amount: el.amount.value.trim(),
                 payment_type: currentType(),
-            });
+            };
 
-            mountPaymentElement(intent);
+            const fingerprint = Object.values(details).join('|');
+            if (state.detailsFingerprint !== fingerprint) {
+                state.idempotencyKey = crypto.randomUUID();
+                state.detailsFingerprint = fingerprint;
+            }
+
+            el.submitLabel.textContent = 'Preparing secure payment…';
+
+            const created = await request(urls.intent, details, undefined, {
+                'Idempotency-Key': state.idempotencyKey,
+            });
+            const attempt = await waitUntilReady(created.id);
+
+            state.attemptId = attempt.id;
+            // Show exactly what the server priced, which is what Stripe will charge.
+            renderSummary(attempt);
+            mountPaymentElement(attempt.client_secret);
             state.step = 'payment';
             lockDetails(true);
             el.paymentStep.classList.remove('hidden');
-            renderSubmitLabel();
         } catch (error) {
+            // A failed or conflicting attempt can't be retried; the next try gets a new one.
+            if (error.startOver || error.status === 409) {
+                state.idempotencyKey = null;
+                state.detailsFingerprint = null;
+            }
+
             Object.entries(error.errors ?? {}).forEach(([name, messages]) => setFieldError(name, messages[0]));
             showError(error.message);
         } finally {
             setBusy(false);
+            renderSubmitLabel();
         }
     }
 
-    function mountPaymentElement({ client_secret: clientSecret, return_url: returnUrl, publishable_key: key }) {
-        state.stripe ??= window.Stripe(key || form.dataset.stripeKey);
-        state.returnUrl = returnUrl;
+    function mountPaymentElement(clientSecret) {
+        state.stripe ??= window.Stripe(form.dataset.stripeKey);
         state.elements = state.stripe.elements({ clientSecret });
         state.elements.create('payment', { layout: 'tabs' }).mount(el.paymentElement);
     }
@@ -248,7 +322,7 @@ function initPaymentForm(form) {
 
         const { error } = await state.stripe.confirmPayment({
             elements: state.elements,
-            confirmParams: { return_url: state.returnUrl },
+            confirmParams: { return_url: `${urls.return}/${state.attemptId}` },
         });
 
         // Only reached on immediate failure; success redirects to return_url.

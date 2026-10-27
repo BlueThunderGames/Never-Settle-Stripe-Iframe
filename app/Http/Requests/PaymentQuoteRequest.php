@@ -2,13 +2,12 @@
 
 namespace App\Http\Requests;
 
+use App\Rules\PaymentAmount;
 use App\Services\FeeCalculator;
 use App\Services\MoneyParser;
-use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
-use InvalidArgumentException;
 
 class PaymentQuoteRequest extends FormRequest
 {
@@ -28,7 +27,7 @@ class PaymentQuoteRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'amount' => ['bail', 'required', $this->validAmount(...)],
+            'amount' => ['bail', 'required', new PaymentAmount],
             'payment_type' => ['bail', 'required', Rule::in([FeeCalculator::CARD, FeeCalculator::ACH])],
         ];
     }
@@ -53,31 +52,5 @@ class PaymentQuoteRequest extends FormRequest
     public function paymentType(): string
     {
         return $this->validated('payment_type');
-    }
-
-    private function validAmount(string $attribute, mixed $value, Closure $fail): void
-    {
-        if (! is_string($value) && ! is_int($value) && ! is_float($value)) {
-            $fail('Enter a valid dollar amount, e.g. 125.50');
-
-            return;
-        }
-
-        try {
-            $cents = app(MoneyParser::class)->toCents($value);
-        } catch (InvalidArgumentException $e) {
-            $fail($e->getMessage());
-
-            return;
-        }
-
-        $min = config('payments.limits.min_amount_cents');
-        $max = config('payments.limits.max_amount_cents');
-
-        if ($cents < $min) {
-            $fail('The minimum payment is $'.number_format($min / 100, 2).'.');
-        } elseif ($cents > $max) {
-            $fail('The maximum payment is $'.number_format($max / 100, 2).'.');
-        }
     }
 }

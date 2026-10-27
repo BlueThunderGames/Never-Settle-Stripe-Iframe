@@ -4,6 +4,21 @@ return [
 
     'currency' => 'usd',
 
+    /*
+    | Sites allowed to embed the payment page in an iframe (CSP frame-ancestors).
+    | Comma separated in .env. Host sources only: a port may be a number or *, and
+    | a leading *. matches any subdomain. The app's own origin is always allowed.
+    */
+    'embed' => [
+        'allowed_origins' => array_values(array_filter(array_map(
+            'trim',
+            explode(',', (string) env(
+                'PAYMENTS_EMBED_ORIGINS',
+                'http://localhost:*,http://127.0.0.1:*,https://*.webflow.io',
+            )),
+        ))),
+    ],
+
     // Invoice amount limits, in cents (Stripe's minimum charge is $0.50, card maximum $999,999.99).
     'limits' => [
         'min_amount_cents' => (int) env('PAYMENTS_MIN_AMOUNT_CENTS', 50),

@@ -33,6 +33,9 @@ return new class extends Migration
 
             $table->string('status', 32)->default('pending')->index();
             $table->string('stripe_payment_intent_id')->nullable()->unique();
+            // Encrypted by the model. Lets the form fetch it after the worker creates the intent;
+            // cleared once the payment reaches a final state.
+            $table->text('client_secret')->nullable();
 
             $table->string('failure_code')->nullable();
             $table->text('failure_message')->nullable();
