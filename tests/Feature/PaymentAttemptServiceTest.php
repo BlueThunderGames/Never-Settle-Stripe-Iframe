@@ -3,8 +3,10 @@
 namespace Tests\Feature;
 
 use App\Enums\PaymentAttemptStatus;
+use App\Enums\PaymentType;
 use App\Exceptions\IdempotencyKeyReused;
 use App\Models\PaymentAttempt;
+use App\Services\FeeCalculator;
 use App\Services\PaymentAttemptService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -29,7 +31,16 @@ class PaymentAttemptServiceTest extends TestCase
         $this->assertSame(10431, $attempt->total_cents);
         $this->assertSame('usd', $attempt->currency);
         $this->assertSame(PaymentAttemptStatus::Pending, $attempt->status);
+        $this->assertSame(PaymentType::Card, $attempt->payment_type);
         $this->assertNotEmpty($attempt->public_id);
+    }
+
+    public function test_it_accepts_the_payment_type_enum_directly(): void
+    {
+        $attempt = $this->service()->findOrCreate('key-enum', 'INV-1', 10098, PaymentType::Ach);
+
+        $this->assertSame(PaymentType::Ach, $attempt->fresh()->payment_type);
+        $this->assertSame(10180, $attempt->total_cents);
     }
 
     public function test_it_prices_ach_with_the_ach_rules(): void
@@ -55,7 +66,7 @@ class PaymentAttemptServiceTest extends TestCase
         $first = $this->service()->findOrCreate('key-1', 'INV-1', 10098, 'card');
 
         config(['payments.fees.card.percentage' => 5.0]);
-        app()->forgetInstance(\App\Services\FeeCalculator::class);
+        app()->forgetInstance(FeeCalculator::class);
 
         $second = $this->service()->findOrCreate('key-1', 'INV-1', 10098, 'card');
 

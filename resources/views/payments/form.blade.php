@@ -3,10 +3,10 @@
 @section('title', 'Pay an Invoice')
 
 @php
-    $cardPercent = config('payments.fees.card.percentage', 2.9);
-    $cardFixed = config('payments.fees.card.fixed_cents', 30) / 100;
-    $achPercent = config('payments.fees.ach.percentage', 0.8);
-    $achCap = config('payments.fees.ach.cap_cents', 500) / 100;
+    $cardPercent = config('payments.fees.card.percentage');
+    $cardFixed = config('payments.fees.card.fixed_cents') / 100;
+    $achPercent = config('payments.fees.ach.percentage');
+    $achCap = config('payments.fees.ach.cap_cents') / 100;
 
     $paymentTypes = [
         'card' => [

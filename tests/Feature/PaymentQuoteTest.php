@@ -68,6 +68,36 @@ class PaymentQuoteTest extends TestCase
         ];
     }
 
+    public function test_the_total_including_the_fee_must_stay_within_stripes_maximum(): void
+    {
+        $tooLarge = 'That amount is too large once the processing fee is added. Please enter a smaller amount.';
+
+        // $999,999.99 is a valid invoice, but the card fee pushes the total past $999,999.99.
+        $this->postJson('/payments/quote', ['amount' => '999,999.99', 'payment_type' => 'card'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['amount' => $tooLarge]);
+
+        // ACH adds a flat $5.00 here, so the largest invoice is $999,994.99 (total exactly $999,999.99).
+        $this->postJson('/payments/quote', ['amount' => '999,994.99', 'payment_type' => 'ach'])
+            ->assertOk()
+            ->assertJsonPath('total_cents', 99999999);
+
+        $this->postJson('/payments/quote', ['amount' => '999,995.00', 'payment_type' => 'ach'])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['amount' => $tooLarge]);
+    }
+
+    public function test_it_honors_a_configured_total_limit(): void
+    {
+        config(['payments.limits.max_total_cents' => 100000]);
+
+        $this->postJson('/payments/quote', ['amount' => '1000', 'payment_type' => 'ach'])
+            ->assertUnprocessable();
+
+        $this->postJson('/payments/quote', ['amount' => '990', 'payment_type' => 'ach'])
+            ->assertOk();
+    }
+
     public function test_invalid_input_never_returns_a_quote(): void
     {
         $this->postJson('/payments/quote', ['amount' => 'abc', 'payment_type' => 'card'])

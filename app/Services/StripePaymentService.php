@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\PaymentAttemptStatus;
+use App\Enums\PaymentType;
 use App\Exceptions\PaymentProviderException;
 use App\Models\PaymentAttempt;
 use Illuminate\Support\Facades\Log;
@@ -46,7 +47,7 @@ class StripePaymentService
             return $this->sync($attempt);
         }
 
-        if ($attempt->failure_code !== null) {
+        if ($attempt->status === PaymentAttemptStatus::Failed) {
             throw new PaymentProviderException(self::START_OVER_MESSAGE, retryable: false);
         }
 
@@ -74,6 +75,7 @@ class StripePaymentService
             ]);
 
             $attempt->forceFill([
+                'status' => PaymentAttemptStatus::Failed,
                 'failure_code' => $e->getStripeCode() ?? 'api_error',
                 'failure_message' => $e->getMessage(),
             ])->save();
@@ -117,19 +119,20 @@ class StripePaymentService
         $params = [
             'amount' => $attempt->total_cents,
             'currency' => $attempt->currency,
-            'payment_method_types' => [$attempt->payment_type === FeeCalculator::ACH ? 'us_bank_account' : 'card'],
+            // Restricts the intent to the method that was quoted, since the fee differs per method.
+            'allowed_payment_method_types' => [$attempt->payment_type->stripeMethodType()],
             // Lets the client find and match the payment to an invoice by hand in Stripe.
             'description' => "Invoice {$attempt->invoice_number}",
             'metadata' => [
                 'invoice_number' => $attempt->invoice_number,
                 'invoice_amount' => $this->dollars($attempt->amount_cents),
                 'processing_fee' => $this->dollars($attempt->fee_cents),
-                'payment_type' => $attempt->payment_type,
+                'payment_type' => $attempt->payment_type->value,
                 'payment_attempt' => $attempt->public_id,
             ],
         ];
 
-        if ($attempt->payment_type === FeeCalculator::ACH) {
+        if ($attempt->payment_type === PaymentType::Ach) {
             $params['payment_method_options'] = [
                 'us_bank_account' => [
                     'verification_method' => 'automatic',

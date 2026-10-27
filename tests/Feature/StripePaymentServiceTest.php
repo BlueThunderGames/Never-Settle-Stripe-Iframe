@@ -60,7 +60,8 @@ class StripePaymentServiceTest extends TestCase
             ->withArgs(function (array $params, array $options) use ($attempt) {
                 $this->assertSame(10431, $params['amount']);
                 $this->assertSame('usd', $params['currency']);
-                $this->assertSame(['card'], $params['payment_method_types']);
+                $this->assertSame(['card'], $params['allowed_payment_method_types']);
+                $this->assertArrayNotHasKey('payment_method_types', $params);
                 $this->assertSame('Invoice INV-1042', $params['description']);
                 $this->assertSame([
                     'invoice_number' => 'INV-1042',
@@ -93,7 +94,7 @@ class StripePaymentServiceTest extends TestCase
         $this->intents->shouldReceive('create')->once()
             ->withArgs(function (array $params) {
                 $this->assertSame(10180, $params['amount']);
-                $this->assertSame(['us_bank_account'], $params['payment_method_types']);
+                $this->assertSame(['us_bank_account'], $params['allowed_payment_method_types']);
                 $this->assertSame('automatic', $params['payment_method_options']['us_bank_account']['verification_method']);
                 $this->assertSame('0.82', $params['metadata']['processing_fee']);
 
@@ -219,6 +220,7 @@ class StripePaymentServiceTest extends TestCase
         }
 
         $this->assertNull($attempt->fresh()->failure_code, 'a network failure must not poison the attempt');
+        $this->assertSame(PaymentAttemptStatus::Pending, $attempt->fresh()->status);
 
         $service->intentFor($attempt->fresh());
 
@@ -244,6 +246,7 @@ class StripePaymentServiceTest extends TestCase
 
         $attempt->refresh();
         $this->assertSame('amount_too_small', $attempt->failure_code);
+        $this->assertSame(PaymentAttemptStatus::Failed, $attempt->status);
         $this->assertSame('Invalid amount', $attempt->failure_message);
         $this->assertNull($attempt->stripe_payment_intent_id);
 

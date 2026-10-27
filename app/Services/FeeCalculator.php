@@ -2,14 +2,11 @@
 
 namespace App\Services;
 
+use App\Enums\PaymentType;
 use InvalidArgumentException;
 
 class FeeCalculator
 {
-    public const CARD = 'card';
-
-    public const ACH = 'ach';
-
     /**
      * @param  array{card: array{percentage: float, fixed_cents: int, max_surcharge_percentage?: float|null}, ach: array{percentage: float, cap_cents: int}}  $fees
      */
@@ -19,18 +16,23 @@ class FeeCalculator
      * Gross the invoice up so that, after Stripe takes its fee from the total,
      * the merchant still receives the full invoice amount.
      *
+     * A string is accepted for convenience and must be a valid PaymentType value.
+     *
      * @return array{amount_cents: int, fee_cents: int, total_cents: int}
      */
-    public function quote(int $amountCents, string $paymentType): array
+    public function quote(int $amountCents, PaymentType|string $paymentType): array
     {
         if ($amountCents <= 0) {
             throw new InvalidArgumentException('Amount must be greater than zero.');
         }
 
-        $feeCents = match ($paymentType) {
-            self::CARD => $this->cardFee($amountCents),
-            self::ACH => $this->achFee($amountCents),
-            default => throw new InvalidArgumentException("Unsupported payment type [{$paymentType}]."),
+        $type = $paymentType instanceof PaymentType
+            ? $paymentType
+            : PaymentType::tryFrom($paymentType) ?? throw new InvalidArgumentException("Unsupported payment type [{$paymentType}].");
+
+        $feeCents = match ($type) {
+            PaymentType::Card => $this->cardFee($amountCents),
+            PaymentType::Ach => $this->achFee($amountCents),
         };
 
         return [

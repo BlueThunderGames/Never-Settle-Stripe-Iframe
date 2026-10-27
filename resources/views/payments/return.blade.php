@@ -1,7 +1,7 @@
 @extends('layouts.iframe')
 
 @php
-    $isAch = $attempt->payment_type === 'ach';
+    $isAch = $attempt->payment_type === \App\Enums\PaymentType::Ach;
     $total = '$'.number_format($attempt->total_cents / 100, 2);
 
     $content = match (true) {
@@ -15,6 +15,15 @@
             'message' => $isAch
                 ? "Your bank payment of {$total} for invoice {$attempt->invoice_number} has been submitted. It can take a few business days to clear."
                 : "Your payment of {$total} for invoice {$attempt->invoice_number} is being processed.",
+            'tone' => 'pending',
+        ],
+        $outcome === 'verification' => [
+            'title' => 'Verify your bank account',
+            'message' => "Your bank account was added, but it must be verified before your payment of {$total} for invoice {$attempt->invoice_number} can be submitted. "
+                .(($verification['arrival'] ?? null)
+                    ? 'Stripe will send a small deposit to your bank by '.$verification['arrival']->format('F j, Y').'. '
+                    : 'Stripe will send a small deposit to your bank within 1–2 business days. ')
+                .'Once it arrives, confirm it using the link below. Your payment is not complete until then.',
             'tone' => 'pending',
         ],
         default => [
@@ -52,11 +61,28 @@
             {{ $content['message'] }}
         </p>
 
-        <a
-            href="{{ route('payments.show') }}"
-            class="mt-8 inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-        >
-            {{ $content['tone'] === 'error' ? 'Try again' : 'Make another payment' }}
-        </a>
+        @if (($verification['url'] ?? null) && $outcome === 'verification')
+            <a
+                href="{{ $verification['url'] }}"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="mt-8 inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+            >
+                Verify bank account
+            </a>
+        @endif
+
+        <div>
+            <a
+                href="{{ route('payments.show') }}"
+                @class([
+                    'inline-flex items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600',
+                    'mt-8 bg-indigo-600 text-white shadow-sm hover:bg-indigo-500' => ! ($outcome === 'verification' && ($verification['url'] ?? null)),
+                    'mt-3 text-slate-600 hover:text-slate-900' => $outcome === 'verification' && ($verification['url'] ?? null),
+                ])
+            >
+                {{ $content['tone'] === 'error' ? 'Try again' : 'Make another payment' }}
+            </a>
+        </div>
     </div>
 @endsection

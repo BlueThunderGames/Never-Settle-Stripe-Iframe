@@ -2,6 +2,7 @@
 
 namespace App\Jobs;
 
+use App\Enums\PaymentAttemptStatus;
 use App\Exceptions\PaymentProviderException;
 use App\Models\PaymentAttempt;
 use App\Services\StripePaymentService;
@@ -93,6 +94,7 @@ class CreateStripePaymentIntent implements ShouldQueue
         }
 
         $attempt->forceFill([
+            'status' => PaymentAttemptStatus::Failed,
             'failure_code' => $attempt->failure_code ?? 'provider_unavailable',
             'failure_message' => $attempt->failure_message ?? $exception->getMessage(),
         ])->save();

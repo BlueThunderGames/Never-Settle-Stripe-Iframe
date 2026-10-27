@@ -23,6 +23,8 @@ return [
     'limits' => [
         'min_amount_cents' => (int) env('PAYMENTS_MIN_AMOUNT_CENTS', 50),
         'max_amount_cents' => (int) env('PAYMENTS_MAX_AMOUNT_CENTS', 99999999),
+        // Stripe's per-payment ceiling applies to the total charged, so the fee counts toward it.
+        'max_total_cents' => (int) env('PAYMENTS_MAX_TOTAL_CENTS', 99999999),
     ],
 
     /*

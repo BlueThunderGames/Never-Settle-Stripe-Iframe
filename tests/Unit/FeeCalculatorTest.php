@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Enums\PaymentType;
 use App\Services\FeeCalculator;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -90,6 +91,19 @@ class FeeCalculatorTest extends TestCase
         $this->assertSame(
             $this->calculator()->quote(10098, 'ach'),
             $this->calculator(3.0)->quote(10098, 'ach'),
+        );
+    }
+
+    public function test_it_accepts_the_payment_type_enum_as_well_as_its_string_value(): void
+    {
+        $this->assertSame(
+            $this->calculator()->quote(10098, 'card'),
+            $this->calculator()->quote(10098, PaymentType::Card),
+        );
+
+        $this->assertSame(
+            $this->calculator()->quote(10098, 'ach'),
+            $this->calculator()->quote(10098, PaymentType::Ach),
         );
     }
 

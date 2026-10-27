@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Enums\PaymentAttemptStatus;
 use App\Exceptions\PaymentProviderException;
 use App\Jobs\CreateStripePaymentIntent;
 use App\Models\PaymentAttempt;
@@ -127,6 +128,7 @@ class CreateStripePaymentIntentJobTest extends TestCase
 
         $job->assertFailed();
         $this->assertSame('amount_too_small', $attempt->fresh()->failure_code);
+        $this->assertSame(PaymentAttemptStatus::Failed, $attempt->fresh()->status);
     }
 
     public function test_once_retries_are_exhausted_the_attempt_is_marked_failed(): void
@@ -137,6 +139,7 @@ class CreateStripePaymentIntentJobTest extends TestCase
 
         $attempt->refresh();
         $this->assertSame('provider_unavailable', $attempt->failure_code);
+        $this->assertSame(PaymentAttemptStatus::Failed, $attempt->status);
         $this->assertSame('Stripe is down', $attempt->failure_message);
     }
 

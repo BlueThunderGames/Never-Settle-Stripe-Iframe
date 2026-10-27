@@ -17,11 +17,14 @@ enum PaymentAttemptStatus: string
     case Succeeded = 'succeeded';
     case Canceled = 'canceled';
 
+    // Local only: we couldn't create the PaymentIntent. Never reached Stripe's own statuses.
+    case Failed = 'failed';
+
     /**
      * Final states never change again, so we can stop re-checking Stripe.
      */
     public function isFinal(): bool
     {
-        return in_array($this, [self::Succeeded, self::Canceled], true);
+        return in_array($this, [self::Succeeded, self::Canceled, self::Failed], true);
     }
 }

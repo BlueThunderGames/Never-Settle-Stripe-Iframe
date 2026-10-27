@@ -16,7 +16,11 @@ An embeddable invoice payment form, built to sit in an iframe on a Webflow site.
 - [Running the tests](#running-the-tests)
 - [API](#api)
 - [Project structure](#project-structure)
+- [Production notes](#production-notes)
 - [Known limitations](#known-limitations)
+- [Verification status](#verification-status)
+- [Decisions and trade-offs](#decisions-and-trade-offs)
+- [What is not covered](#what-is-not-covered)
 
 ## How it works
 
@@ -74,7 +78,7 @@ The queue uses the database (`QUEUE_CONNECTION=database`), so there's nothing ex
 
 **Debugging**
 
-- `php artisan pail` streams the log live, or read `storage/logs/laravel.log`. Search for an attempt ID to follow one payment.
+- Read `storage/logs/laravel.log` and search for an attempt ID to follow one payment. On macOS and Linux, `composer run logs` streams it live with Pail. Pail needs the `pcntl` PHP extension, which isn't available on Windows, so there use `Get-Content storage/logs/laravel.log -Wait -Tail 50` in PowerShell.
 - `php artisan queue:failed` lists jobs that failed permanently, and `php artisan queue:retry all` re-runs them. A permanently failed attempt is also marked failed on its row in `payment_attempts`, and the form tells the customer to start again.
 
 ## Fees
@@ -133,13 +137,15 @@ STRIPE_KEY=pk_test_...
 STRIPE_SECRET=sk_test_...
 ```
 
+Stripe now manages payment methods from the Dashboard, so also make sure **Cards** and **ACH Direct Debit** are turned on under Settings → Payment methods (in test mode). The app limits each payment to the method the customer chose, because the fee differs between them.
+
 ### Run it
 
 ```bash
 composer run dev
 ```
 
-This starts the web server, **the queue worker**, a log viewer and Vite together. Open <http://localhost:8000>.
+This starts the web server, **the queue worker** and Vite together. Open <http://localhost:8000>.
 
 To run the pieces yourself instead, use three terminals:
 
@@ -155,7 +161,9 @@ npm run dev
 2. Continue. The payment fields appear after a moment, once the worker has created the PaymentIntent. If they don't, check that the worker is running.
 3. Pay with one of Stripe's [test cards](https://docs.stripe.com/testing), for example `4242 4242 4242 4242` with any future expiry and any CVC. You should land on a "Payment successful" page.
 4. Try a declining card from the same list to see the error page.
-5. Repeat with **ACH**, using Stripe's [test bank account details](https://docs.stripe.com/testing). The result page should say the payment was submitted and may take a few business days. Test-mode ACH payments settle on Stripe's schedule, so they can remain in `processing` for a while.
+5. Repeat with **ACH**. The Payment Element offers two ways to add a bank account, and the result page differs:
+   - **Instant verification** (log in to a test bank, using Stripe's [test bank details](https://docs.stripe.com/testing)): the page says the payment was **submitted** and may take a few business days. Test-mode ACH payments settle on Stripe's schedule, so they can stay in `processing` for a while.
+   - **Entering the account and routing number by hand**: Stripe has to verify the account with a small deposit first. The page says **Verify your bank account**, shows when the deposit arrives and links to Stripe's verification page. The payment isn't complete until the customer verifies, so it isn't a failure. In test mode, Stripe's testing page lists the test micro-deposit values to use.
 6. Open the payment in the Stripe dashboard (test mode). The description is `Invoice <number>`, and the metadata holds the invoice number, invoice amount, processing fee and payment attempt ID, which is how the client matches payments to invoices by hand.
 
 ## Embedding in Webflow
@@ -215,17 +223,25 @@ Everything is set in `.env`. The defaults match the rates above, so you only nee
 | `PAYMENTS_ACH_FEE_CAP_CENTS` | `500` | ACH fee cap, in cents |
 | `PAYMENTS_MIN_AMOUNT_CENTS` | `50` | Smallest invoice accepted ($0.50, Stripe's minimum) |
 | `PAYMENTS_MAX_AMOUNT_CENTS` | `99999999` | Largest invoice accepted ($999,999.99) |
+| `PAYMENTS_MAX_TOTAL_CENTS` | `99999999` | Largest total charged, fee included (Stripe's per-payment limit). Requests that would exceed it are rejected |
 | `SESSION_SAME_SITE`, `SESSION_SECURE_COOKIE`, `SESSION_PARTITIONED_COOKIE` | `lax`, unset, `false` | Cookie settings; see [Cookies inside the iframe](#cookies-inside-the-iframe) |
 
 Rates, limits and embedding settings live in `config/payments.php`.
 
 ## Running the tests
 
+There are two suites, and neither needs Stripe keys, a worker or the network.
+
 ```bash
-composer test
+composer test    # PHP: the backend
+npm test         # JavaScript: the payment form's behaviour
 ```
 
-The tests use an in-memory database, run queued jobs inline and mock Stripe, so they need no keys, no worker and no network. They cover amount parsing, the fee calculation (including rounding boundaries and the ACH cap), request validation, the idempotent creation of attempts, the Stripe service and job (retries, rejections and partial failures), the status and return pages, and the embedding headers.
+**PHP tests** (`tests/Unit`, `tests/Feature`) use an in-memory database, run queued jobs inline and mock Stripe. They cover amount parsing, the fee calculation (including rounding boundaries and the ACH cap), request validation, the idempotent creation of attempts, the Stripe service and job (retries, rejections and partial failures), the status and return pages, and the embedding headers.
+
+**JavaScript tests** (`tests/js`) run [Vitest](https://vitest.dev) in a simulated browser with fake timers and a fake `fetch` and Stripe.js. They cover the debounced live quotes, stale responses being ignored, the idempotency key rules (reuse on a retry of the same details, a new key after a failure or a changed amount), polling and its timeout, mounting and confirming the payment, and the error messages. They use a copy of the form's markup, and `tests/Feature/PaymentFormMarkupTest.php` checks the real template still has every element the script depends on.
+
+Both suites should pass before you commit. Code style is checked with `vendor/bin/pint --test`.
 
 ## API
 
@@ -239,7 +255,7 @@ Prices an invoice amount for a payment method. Limited to 60 requests per minute
 { "amount": "1,000.50", "payment_type": "card" }
 ```
 
-- `amount`: dollars as a string or number. `1,000.50`, `$12` and `19.99` are accepted. More than 2 decimals is rejected.
+- `amount`: dollars as a string or number. `1,000.50`, `$12` and `19.99` are accepted. More than 2 decimals is rejected. The amount is also rejected if the invoice plus its fee would exceed Stripe's per-payment maximum.
 - `payment_type`: `card` or `ach`.
 
 Response `200`:
@@ -292,11 +308,14 @@ The page Stripe redirects to after payment. It refreshes the status from Stripe 
 | `app/Services/PaymentAttemptService.php` | Creates a payment attempt, or returns the existing one for the same idempotency key |
 | `app/Services/StripePaymentService.php` | Creates the PaymentIntent and syncs its status, with the failure handling described above |
 | `app/Jobs/CreateStripePaymentIntent.php` | The queued job: retries, backoff and logging |
-| `app/Http/Controllers/PaymentController.php` | Form page, quote, create attempt, status and return page |
+| `app/Http/Controllers/` | One small controller per job: `PaymentFormController` (the page), `PaymentQuoteController`, `PaymentAttemptController` (create and poll) and `PaymentReturnController` |
 | `app/Http/Requests/` | Validation for the quote and create-attempt endpoints |
 | `app/Http/Middleware/AllowIframeEmbedding.php` | Sets the `frame-ancestors` header from `PAYMENTS_EMBED_ORIGINS` |
+| `app/Rules/PaymentAmount.php` | Validation rule for the amount (format, minimum and maximum), shared by both requests |
+| `app/Exceptions/` | `IdempotencyKeyReused` (a key reused with different details) and `PaymentProviderException` (a Stripe failure, flagged retryable or not) |
 | `app/Models/PaymentAttempt.php` | One payment attempt and its Stripe status |
-| `app/Enums/PaymentAttemptStatus.php` | Attempt statuses, mirroring Stripe's PaymentIntent statuses |
+| `app/Enums/PaymentType.php` | The two payment options, `card` and `ach`, and the Stripe method type each maps to |
+| `app/Enums/PaymentAttemptStatus.php` | Attempt statuses: Stripe's PaymentIntent statuses, plus `pending` (not created yet) and `failed` (we couldn't create it) |
 | `config/payments.php` | Fee rates, limits, currency and embedding settings |
 | `resources/views/payments/` | The payment form and the return page |
 | `resources/js/payment-form.js` | Live quoting, polling for the PaymentIntent and the two-step payment flow |
@@ -316,6 +335,18 @@ Every payment attempt has a unique idempotency key. Retrying or double-submittin
 | All retries are used up | The attempt is marked failed and the form shows an error |
 | Stripe is unreachable on the return page | The page shows the last known status |
 
+## Production notes
+
+This is set up to run locally. Before using it for real:
+
+- **Database, sessions, cache and queue.** They all use SQLite files here, which is fine for a demo. Use MySQL or PostgreSQL for the database, and Redis or the database for the queue, cache and sessions. SQLite is configured with WAL mode and a busy timeout so the web app and the worker can share it, but it isn't meant for real traffic.
+- **Run the worker under a process manager** such as Supervisor or systemd, with `php artisan queue:work --tries=5`, and restart it on each deploy (`php artisan queue:restart`). `queue:listen`, which `composer run dev` uses, is for development only.
+- **HTTPS and cookies.** Serve the app over HTTPS and set the cookie options in [Cookies inside the iframe](#cookies-inside-the-iframe).
+- **Live Stripe keys, and the Dashboard.** Use live keys, and enable Cards and ACH Direct Debit in the live Dashboard.
+- **Clean-up.** Nothing prunes old payment attempts or `failed_jobs` rows. Add a scheduled prune (`php artisan queue:prune-failed --hours=720`, and your own policy for attempts) and decide how long to keep them.
+- **Stale attempts.** With no webhooks, an attempt whose customer never returned stays out of date. A scheduled command that re-checks unfinished attempts, or adding webhooks, would close that gap.
+- **Surcharge rules.** See [the decision above](#decision-card-surcharges-are-not-capped-by-default) before charging real customers.
+
 ## Known limitations
 
 - **No webhooks.** Payment status is read from Stripe when the customer returns to the site. A customer who closes the tab before returning leaves the attempt out of date, and an ACH payment stays `processing` until it's checked again. The payment itself is still in Stripe with the invoice number in its metadata, so the client can reconcile it by hand.
@@ -323,3 +354,39 @@ Every payment attempt has a unique idempotency key. Retrying or double-submittin
 - **Card surcharge rules.** See [the decision above](#decision-card-surcharges-are-not-capped-by-default). The fee is included in the total charged and isn't sent to Stripe as a separate surcharge, and debit cards aren't distinguished from credit cards.
 - **Client secret.** The PaymentIntent's client secret is stored encrypted on the attempt so the form can fetch it, and it's cleared once the payment is final. Anyone holding an attempt's ID, a long random value, can fetch it, which is how Stripe's own client secrets work.
 - **Fixed iframe height.** The embed doesn't resize itself to its content, so choose a height that fits the form and the payment fields.
+
+## Verification status
+
+What has been checked, and how, so nothing here is overstated.
+
+**Checked live against a Stripe sandbox**
+- A card payment end to end: attempt saved, worker created the PaymentIntent, payment fields shown, card charged, return page recorded `succeeded`. The payment appears in the Stripe Dashboard with the `Invoice <number>` description and the invoice number, amount, fee and attempt ID in its metadata.
+- PaymentIntent creation for both card and ACH, each limited to the method that was quoted, for the correct total.
+- ACH with manually entered bank details: the payment correctly waits for micro-deposit verification, and the return page shows "Verify your bank account" with the deposit date and Stripe's verification link instead of a failure.
+- The iframe embedding rule in a real browser: an allowed origin can embed the page and a disallowed one is blocked.
+
+**Checked by automated tests only (Stripe is mocked)**
+- Retries and backoff, Stripe rejections, a save failure after Stripe succeeds, and idempotency conflicts.
+- The return page for a successful card payment, a submitted or cleared ACH payment and a declined payment.
+- The form's behaviour in a simulated browser: live quotes, polling and its timeout, and when the idempotency key is reused or replaced.
+
+**Not verified yet**
+- ACH with instant bank login, and an ACH payment completing after verification.
+- A card decline on the real return page.
+- The form running inside a real cross-site Webflow iframe over HTTPS, with the cross-site cookie settings. Only localhost on different ports was tried.
+- The queue worker and SQLite under real concurrent load.
+- A fresh clone set up from this README.
+
+## Decisions and trade-offs
+
+- **Fees cover Stripe's cost in full.** The brief asks for the client to receive the full invoice amount, so the card fee is not capped at the 3% US surcharge limit by default. This needs a compliance review before real use. See [the decision above](#decision-card-surcharges-are-not-capped-by-default).
+- **Stripe calls run in a queued job.** The brief had no webhooks and manual reconciliation, so this adds some complexity beyond the minimum, in exchange for retries, a record saved before every Stripe call, and a web app that doesn't depend on Stripe's response time. The cost is a short wait while the form polls, and a worker that must be running. See [why Stripe requests run in a background worker](#why-stripe-requests-run-in-a-background-worker).
+- **No webhooks, as the brief specified.** The return page reads the result from Stripe instead.
+
+## What is not covered
+
+- ACH returns and failures that happen days after submission, and the Stripe fees that can come with them. Without webhooks nothing reports them back to the app.
+- A scheduled re-check of abandoned or stale attempts, and clean-up of old data.
+- Refunds, disputes, receipts and notifications.
+- Monitoring and alerting, for example if the worker stops.
+- Automated tests that call the real Stripe API. The Stripe tests use mocks, so an API change needs a manual sandbox run to catch.

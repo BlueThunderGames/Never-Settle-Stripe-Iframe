@@ -278,7 +278,7 @@ function initPaymentForm(form) {
             });
             const attempt = await waitUntilReady(created.id);
 
-            state.attemptId = attempt.id;
+            state.attemptId = created.id;
             // Show exactly what the server priced, which is what Stripe will charge.
             renderSummary(attempt);
             mountPaymentElement(attempt.client_secret);
@@ -301,6 +301,11 @@ function initPaymentForm(form) {
     }
 
     function mountPaymentElement(clientSecret) {
+        // Stripe.js is loaded from js.stripe.com; ad blockers or a bad connection can stop it.
+        if (typeof window.Stripe !== 'function') {
+            throw new Error('The secure payment form could not load. Please reload the page and try again.');
+        }
+
         state.stripe ??= window.Stripe(form.dataset.stripeKey);
         state.elements = state.stripe.elements({ clientSecret });
         state.elements.create('payment', { layout: 'tabs' }).mount(el.paymentElement);
@@ -320,14 +325,19 @@ function initPaymentForm(form) {
         clearErrors();
         setBusy(true);
 
-        const { error } = await state.stripe.confirmPayment({
-            elements: state.elements,
-            confirmParams: { return_url: `${urls.return}/${state.attemptId}` },
-        });
+        try {
+            const { error } = await state.stripe.confirmPayment({
+                elements: state.elements,
+                confirmParams: { return_url: `${urls.return}/${state.attemptId}` },
+            });
 
-        // Only reached on immediate failure; success redirects to return_url.
-        if (error) showError(error.message);
-        setBusy(false);
+            // Only reached on immediate failure; success redirects to return_url.
+            if (error) showError(error.message);
+        } catch {
+            showError('Something went wrong submitting your payment. Please try again.');
+        } finally {
+            setBusy(false);
+        }
     }
 
     el.amount.addEventListener('input', () => scheduleQuote());

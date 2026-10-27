@@ -41,7 +41,7 @@ class PaymentReturnPageTest extends TestCase
         return $attempt;
     }
 
-    private function stripeReturns(string $status, ?array $error = null): void
+    private function stripeReturns(string $status, ?array $error = null, ?array $nextAction = null): void
     {
         $this->intents->shouldReceive('retrieve')->once()->with('pi_123')->andReturn(PaymentIntent::constructFrom([
             'id' => 'pi_123',
@@ -49,7 +49,69 @@ class PaymentReturnPageTest extends TestCase
             'status' => $status,
             'client_secret' => 'pi_123_secret',
             'last_payment_error' => $error,
+            'next_action' => $nextAction,
         ]));
+    }
+
+    private function microdeposits(string $url = 'https://payments.stripe.com/microdeposit/pacs_test_123'): array
+    {
+        return [
+            'type' => 'verify_with_microdeposits',
+            'verify_with_microdeposits' => [
+                'arrival_date' => strtotime('2026-10-28 12:00:00 UTC'),
+                'hosted_verification_url' => $url,
+                'microdeposit_type' => 'descriptor_code',
+            ],
+        ];
+    }
+
+    public function test_an_ach_account_awaiting_microdeposits_asks_the_customer_to_verify_it(): void
+    {
+        $attempt = $this->attempt('ach');
+        $this->stripeReturns('requires_action', null, $this->microdeposits());
+
+        $this->get("/payments/return/{$attempt->public_id}")
+            ->assertOk()
+            ->assertSee('Verify your bank account')
+            ->assertSee('October 28, 2026')
+            ->assertSee('Your payment is not complete until then.')
+            ->assertSee('href="https://payments.stripe.com/microdeposit/pacs_test_123"', false)
+            ->assertDontSee('Payment unsuccessful')
+            ->assertDontSee('Try again');
+
+        $this->assertSame(PaymentAttemptStatus::RequiresAction, $attempt->fresh()->status);
+    }
+
+    public function test_the_verification_link_is_only_shown_for_https_urls(): void
+    {
+        $attempt = $this->attempt('ach');
+        $this->stripeReturns('requires_action', null, $this->microdeposits('javascript:alert(1)'));
+
+        $this->get("/payments/return/{$attempt->public_id}")
+            ->assertSee('Verify your bank account')
+            ->assertDontSee('javascript:alert(1)', false)
+            ->assertDontSee('Verify bank account');
+    }
+
+    public function test_verification_still_shows_without_details_when_stripe_is_unreachable(): void
+    {
+        $attempt = $this->attempt('ach', ['status' => PaymentAttemptStatus::RequiresAction]);
+        $this->intents->shouldReceive('retrieve')->once()->andThrow(new ApiConnectionException('timeout'));
+
+        $this->get("/payments/return/{$attempt->public_id}")
+            ->assertSee('Verify your bank account')
+            ->assertSee('within 1–2 business days')
+            ->assertDontSee('Verify bank account');
+    }
+
+    public function test_a_card_payment_stuck_awaiting_action_is_not_treated_as_bank_verification(): void
+    {
+        $attempt = $this->attempt('card');
+        $this->stripeReturns('requires_action');
+
+        $this->get("/payments/return/{$attempt->public_id}")
+            ->assertSee('Payment unsuccessful')
+            ->assertDontSee('Verify your bank account');
     }
 
     public function test_a_successful_card_payment_shows_a_success_message(): void
@@ -119,7 +181,7 @@ class PaymentReturnPageTest extends TestCase
     public function test_internal_creation_errors_are_never_shown(): void
     {
         $attempt = app(PaymentAttemptService::class)->findOrCreate((string) Str::uuid(), 'INV-1', 5000, 'card');
-        $attempt->update(['failure_code' => 'api_error', 'failure_message' => 'Secret internal detail']);
+        $attempt->update(['status' => PaymentAttemptStatus::Failed, 'failure_code' => 'api_error', 'failure_message' => 'Secret internal detail']);
 
         $this->get("/payments/return/{$attempt->public_id}")
             ->assertSee('Payment unsuccessful')

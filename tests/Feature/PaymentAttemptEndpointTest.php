@@ -8,6 +8,7 @@ use App\Models\PaymentAttempt;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
+use Illuminate\Testing\TestResponse;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
@@ -20,7 +21,7 @@ class PaymentAttemptEndpointTest extends TestCase
         return $overrides + ['invoice_number' => 'INV-1042', 'amount' => '100.98', 'payment_type' => 'card'];
     }
 
-    private function create(array $payload = [], ?string $key = 'default'): \Illuminate\Testing\TestResponse
+    private function create(array $payload = [], ?string $key = 'default'): TestResponse
     {
         $headers = $key === null ? [] : ['Idempotency-Key' => $key === 'default' ? (string) Str::uuid() : $key];
 
@@ -95,7 +96,7 @@ class PaymentAttemptEndpointTest extends TestCase
 
         $failed = (string) Str::uuid();
         $this->create(['invoice_number' => 'INV-2'], $failed);
-        PaymentAttempt::where('invoice_number', 'INV-2')->firstOrFail()->update(['failure_code' => 'api_error']);
+        PaymentAttempt::where('invoice_number', 'INV-2')->firstOrFail()->update(['failure_code' => 'api_error', 'status' => PaymentAttemptStatus::Failed]);
         Queue::fake();
         $this->create(['invoice_number' => 'INV-2'], $failed)->assertStatus(202);
         Queue::assertNothingPushed();
@@ -120,6 +121,7 @@ class PaymentAttemptEndpointTest extends TestCase
             'control characters in invoice number' => [['invoice_number' => "INV\x00-1"], 'invoice_number', 'The invoice number contains invalid characters.'],
             'invalid amount' => [['amount' => 'abc'], 'amount', 'Enter a valid dollar amount, e.g. 125.50'],
             'amount below the minimum' => [['amount' => '0.49'], 'amount', 'The minimum payment is $0.50.'],
+            'total over the limit once the fee is added' => [['amount' => '999999.99'], 'amount', 'That amount is too large once the processing fee is added. Please enter a smaller amount.'],
             'unknown payment type' => [['payment_type' => 'wire'], 'payment_type', 'Choose a valid payment method.'],
         ];
     }
@@ -172,7 +174,7 @@ class PaymentAttemptEndpointTest extends TestCase
 
     public function test_status_reports_failure_without_leaking_stripe_details(): void
     {
-        $attempt = $this->attempt(['failure_code' => 'amount_too_small', 'failure_message' => 'Secret internal detail']);
+        $attempt = $this->attempt(['status' => PaymentAttemptStatus::Failed, 'failure_code' => 'amount_too_small', 'failure_message' => 'Secret internal detail']);
 
         $response = $this->getJson("/payments/attempts/{$attempt->public_id}")
             ->assertOk()

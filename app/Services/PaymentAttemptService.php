@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Enums\PaymentAttemptStatus;
+use App\Enums\PaymentType;
 use App\Exceptions\IdempotencyKeyReused;
 use App\Models\PaymentAttempt;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -23,8 +24,9 @@ class PaymentAttemptService
         string $idempotencyKey,
         string $invoiceNumber,
         int $amountCents,
-        string $paymentType,
+        PaymentType|string $paymentType,
     ): PaymentAttempt {
+        $paymentType = $paymentType instanceof PaymentType ? $paymentType : PaymentType::from($paymentType);
         $invoiceNumber = trim($invoiceNumber);
         $fingerprint = PaymentAttempt::fingerprint($invoiceNumber, $amountCents, $paymentType);
 
