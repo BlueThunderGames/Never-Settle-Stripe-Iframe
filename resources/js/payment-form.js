@@ -249,6 +249,9 @@ function initPaymentForm(form) {
         if (!validateDetails()) return;
 
         setBusy(true);
+        // Freeze the details while the PaymentIntent is created, so the fields shown at the end
+        // always match what was submitted.
+        lockDetails(true);
         try {
             // Make sure the displayed quote matches the current inputs before charging.
             const key = `${currentType()}|${el.amount.value.trim()}`;
@@ -296,6 +299,7 @@ function initPaymentForm(form) {
             showError(error.message);
         } finally {
             setBusy(false);
+            if (state.step !== 'payment') lockDetails(false);
             renderSubmitLabel();
         }
     }

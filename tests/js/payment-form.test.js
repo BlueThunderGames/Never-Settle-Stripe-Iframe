@@ -278,6 +278,24 @@ describe('starting a payment', () => {
         expect($('[data-submit]').disabled).toBe(false);
     });
 
+    it('stops the payment method from being changed while the payment is being prepared', async () => {
+        server.polls = [{ state: 'pending' }, { state: 'pending' }, ...server.polls];
+
+        await fillValidDetails();
+        submit();
+        await settle(0);
+        expect(text('[data-submit-label]')).toBe('Preparing secure payment…');
+
+        // The customer clicks the other method while the worker is still creating the intent.
+        const ach = document.querySelector('[data-payment-type][value="ach"]');
+        expect(ach.disabled).toBe(true);
+
+        await settle(5000);
+
+        expect(document.querySelector('[data-payment-type][value="card"]').checked).toBe(true);
+        expect(text('[data-submit-label]')).toBe('Pay $104.31');
+    });
+
     it("shows the server's totals on the pay button", async () => {
         await reachPaymentStep();
 
