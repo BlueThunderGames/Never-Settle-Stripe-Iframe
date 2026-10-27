@@ -440,7 +440,17 @@ describe('editing details after the payment step opens', () => {
 });
 
 describe('confirming the payment', () => {
-    it('confirms with Stripe and returns to the page for this attempt', async () => {
+    let redirects;
+
+    beforeEach(() => {
+        redirects = [];
+        $('#payment-form').addEventListener('payment-form:redirect', (event) => {
+            redirects.push(event.detail.url);
+            event.preventDefault();
+        });
+    });
+
+    it('confirms without a full-page redirect, then moves this frame to the result page', async () => {
         await reachPaymentStep();
 
         submit();
@@ -448,11 +458,25 @@ describe('confirming the payment', () => {
 
         expect(stripe.confirmPayment).toHaveBeenCalledTimes(1);
         const args = stripe.confirmPayment.mock.calls[0][0];
+        expect(args.redirect).toBe('if_required');
         expect(args.confirmParams.return_url).toBe('/payments/return/att-1');
         expect(args.elements).toBeDefined();
+        expect(redirects).toEqual(['/payments/return/att-1']);
     });
 
-    it('shows the error Stripe gives for an immediate failure', async () => {
+    it('stays disabled after a successful confirmation so it cannot be submitted twice', async () => {
+        await reachPaymentStep();
+
+        submit();
+        await settle(0);
+        submit();
+        await settle(0);
+
+        expect(stripe.confirmPayment).toHaveBeenCalledTimes(1);
+        expect($('[data-submit]').disabled).toBe(true);
+    });
+
+    it('shows the error Stripe gives for an immediate failure and does not leave the page', async () => {
         await reachPaymentStep();
         stripe.confirmPayment.mockResolvedValueOnce({ error: { message: 'Your card was declined.' } });
 
@@ -461,6 +485,7 @@ describe('confirming the payment', () => {
 
         expect(text('[data-form-error]')).toBe('Your card was declined.');
         expect($('[data-submit]').disabled).toBe(false);
+        expect(redirects).toEqual([]);
     });
 
     it('recovers with a generic message if confirming throws', async () => {
@@ -472,5 +497,6 @@ describe('confirming the payment', () => {
 
         expect(text('[data-form-error]')).toBe('Something went wrong submitting your payment. Please try again.');
         expect($('[data-submit]').disabled).toBe(false);
+        expect(redirects).toEqual([]);
     });
 });

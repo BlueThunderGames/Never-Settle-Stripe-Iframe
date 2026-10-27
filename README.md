@@ -1,6 +1,6 @@
 # Stripe Payment Trial
 
-An embeddable invoice payment form, built to sit in an iframe on a Webflow site. A customer enters an invoice number, a payment amount and a payment method (card or ACH). A **processing fee** is calculated on the server and added to the total, so the client receives the full invoice amount after Stripe takes its cut.
+An embeddable invoice payment form, built to sit in an iframe on a Webflow site. A customer enters an invoice number, a payment amount and a payment method (card or ACH). A **processing fee** is calculated on the server and added to the total, so the client's net proceeds aim to match the invoice amount after Stripe's standard fee. This is an estimate based on assumed standard pricing, not a guarantee.
 
 > **Proof of concept.** The flow is built end to end: form, fee quotes, background payment creation, confirmation page and iframe embedding. The Stripe calls are tested against mocks; do a test payment with your own sandbox keys (see [Try a payment](#try-a-payment)) before relying on it.
 
@@ -354,6 +354,8 @@ This is set up to run locally. Before using it for real:
 - **Card surcharge rules.** See [the decision above](#decision-card-surcharges-are-not-capped-by-default). The fee is included in the total charged and isn't sent to Stripe as a separate surcharge, and debit cards aren't distinguished from credit cards.
 - **Client secret.** The PaymentIntent's client secret is stored encrypted on the attempt so the form can fetch it, and it's cleared once the payment is final. Anyone holding an attempt's ID, a long random value, can fetch it, which is how Stripe's own client secrets work.
 - **Fixed iframe height.** The embed doesn't resize itself to its content, so choose a height that fits the form and the payment fields.
+- **Payment Element inside an iframe.** Stripe advises against placing the Payment Element inside another iframe, because some payment methods need to redirect the page. The form asks Stripe not to redirect unless it must (`redirect: 'if_required'`) and then moves only its own frame to the result page, which keeps the host page in place for card payments. Payment methods that must redirect are not enabled. If the embed proves unreliable on the real site, link customers to the payment page as a top-level page instead of embedding it.
+- **Separate sessions and reloads.** Each browser session, and each page reload, starts a new payment attempt, and abandoned attempts are not cleaned up. The idempotency key lives only in the page's memory.
 
 ## Verification status
 
@@ -364,6 +366,7 @@ What has been checked, and how, so nothing here is overstated.
 - PaymentIntent creation for both card and ACH, each limited to the method that was quoted, for the correct total.
 - ACH with manually entered bank details: the payment correctly waits for micro-deposit verification, and the return page shows "Verify your bank account" with the deposit date and Stripe's verification link instead of a failure.
 - The iframe embedding rule in a real browser: an allowed origin can embed the page and a disallowed one is blocked.
+- A full card payment made from inside an iframe on a different origin (a stand-in page on `localhost:8001` embedding the app on `localhost:8000`): quote, payment fields, payment and the result page all work, and the result page loads inside the iframe without replacing the host page.
 
 **Checked by automated tests only (Stripe is mocked)**
 - Retries and backoff, Stripe rejections, a save failure after Stripe succeeds, and idempotency conflicts.
@@ -373,7 +376,8 @@ What has been checked, and how, so nothing here is overstated.
 **Not verified yet**
 - ACH with instant bank login, and an ACH payment completing after verification.
 - A card decline on the real return page.
-- The form running inside a real cross-site Webflow iframe over HTTPS, with the cross-site cookie settings. Only localhost on different ports was tried.
+- The form running inside the real Webflow site over HTTPS, with the cross-site cookie settings. Only localhost on different ports was tried.
+- Card 3-D Secure and ACH bank login or verification from inside an iframe. These can open pop-ups or redirects, which are the cases Stripe warns about when the Payment Element is nested in another iframe.
 - The queue worker and SQLite under real concurrent load.
 - A fresh clone set up from this README.
 

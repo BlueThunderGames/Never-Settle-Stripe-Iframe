@@ -329,19 +329,37 @@ function initPaymentForm(form) {
         clearErrors();
         setBusy(true);
 
+        let redirecting = false;
+        const returnUrl = `${urls.return}/${state.attemptId}`;
+
         try {
+            // "if_required" keeps card and bank payments on this page. A plain redirect would
+            // navigate the whole browser tab, taking the customer out of the site that embeds us.
             const { error } = await state.stripe.confirmPayment({
                 elements: state.elements,
-                confirmParams: { return_url: `${urls.return}/${state.attemptId}` },
+                confirmParams: { return_url: returnUrl },
+                redirect: 'if_required',
             });
 
-            // Only reached on immediate failure; success redirects to return_url.
-            if (error) showError(error.message);
+            if (error) {
+                showError(error.message);
+            } else {
+                redirecting = true;
+                goToReturnPage(returnUrl);
+            }
         } catch {
             showError('Something went wrong submitting your payment. Please try again.');
         } finally {
-            setBusy(false);
+            // Stay disabled while navigating so the payment can't be submitted twice.
+            if (!redirecting) setBusy(false);
         }
+    }
+
+    // Moves this frame (the iframe, when embedded) to the result page. The event lets tests
+    // intercept the navigation.
+    function goToReturnPage(url) {
+        const proceed = form.dispatchEvent(new CustomEvent('payment-form:redirect', { detail: { url }, cancelable: true }));
+        if (proceed) window.location.assign(url);
     }
 
     el.amount.addEventListener('input', () => scheduleQuote());
