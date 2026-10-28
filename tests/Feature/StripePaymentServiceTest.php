@@ -58,7 +58,7 @@ class StripePaymentServiceTest extends TestCase
 
         $this->intents->shouldReceive('create')->once()
             ->withArgs(function (array $params, array $options) use ($attempt) {
-                $this->assertSame(10431, $params['amount']);
+                $this->assertSame(10430, $params['amount']);
                 $this->assertSame('usd', $params['currency']);
                 $this->assertSame(['card'], $params['allowed_payment_method_types']);
                 $this->assertArrayNotHasKey('payment_method_types', $params);
@@ -66,7 +66,7 @@ class StripePaymentServiceTest extends TestCase
                 $this->assertSame([
                     'invoice_number' => 'INV-1042',
                     'invoice_amount' => '100.98',
-                    'processing_fee' => '3.33',
+                    'processing_fee' => '3.32',
                     'payment_type' => 'card',
                     'payment_attempt' => $attempt->public_id,
                 ], $params['metadata']);
@@ -93,10 +93,10 @@ class StripePaymentServiceTest extends TestCase
 
         $this->intents->shouldReceive('create')->once()
             ->withArgs(function (array $params) {
-                $this->assertSame(10180, $params['amount']);
+                $this->assertSame(10179, $params['amount']);
                 $this->assertSame(['us_bank_account'], $params['allowed_payment_method_types']);
                 $this->assertSame('automatic', $params['payment_method_options']['us_bank_account']['verification_method']);
-                $this->assertSame('0.82', $params['metadata']['processing_fee']);
+                $this->assertSame('0.81', $params['metadata']['processing_fee']);
 
                 return true;
             })

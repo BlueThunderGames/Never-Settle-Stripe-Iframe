@@ -1,6 +1,6 @@
 # Stripe Payment Trial
 
-An embeddable invoice payment form, built to sit in an iframe on a Webflow site. A customer enters an invoice number, a payment amount and a payment method (card or ACH). A **processing fee** is calculated on the server and added to the total, so the client's net proceeds aim to match the invoice amount after Stripe's standard fee. This is an estimate based on assumed standard pricing, not a guarantee.
+An embeddable invoice payment form, built to sit in an iframe on a Webflow site. A customer enters an invoice number, a payment amount and a payment method (card or ACH). A **processing fee** is calculated on the server and added to the total, so the client's net proceeds match the invoice amount after Stripe's standard rounded fee. Rates are assumed standard public pricing (2.9% + 30¢ card, 0.8% capped at $5 ACH), not a live quote from Stripe.
 
 > **Proof of concept.** The flow is built end to end: form, fee quotes, background payment creation, confirmation page and iframe embedding. The Stripe calls are tested against mocks; do a test payment with your own sandbox keys (see [Try a payment](#try-a-payment)) before relying on it.
 
@@ -90,7 +90,9 @@ card:  total = (invoice + 30¢) ÷ 0.971
 ach:   total = invoice ÷ 0.992        (fee capped at $5.00)
 ```
 
-The total is **rounded up to the next cent** using integer ceiling division, so we never round down and come up a fraction of a cent short.
+That closed form is **rounded up to the next cent** (integer ceiling division). Stripe then rounds *its* fee (`round(total × 2.9%) + 30¢` for cards, `min(round(total × 0.8%), $5)` for ACH). A ceil-only total can sit one cent above that, so the form fee and the dashboard fee would not match.
+
+After the ceil we **walk the total by a cent** until the merchant nets the invoice and the fee we add equals Stripe's rounded fee. The quote, the PaymentIntent, and the Stripe dashboard then agree.
 
 | Method | Stripe's fee | What we add |
 |---|---|---|
@@ -99,10 +101,13 @@ The total is **rounded up to the next cent** using integer ceiling division, so 
 
 | Invoice | Method | Total charged | Fee added |
 |---|---|---|---|
-| $100.98 | Card | $104.31 | $3.33 |
-| $100.98 | ACH | $101.80 | $0.82 |
-
-Stripe rounds its own fee to whole cents, so the merchant's net can differ from the invoice by a cent. The round-up is deliberately conservative, so it never lands short.
+| $100.00 | Card | $103.30 | $3.30 |
+| $100.00 | ACH | $100.81 | $0.81 |
+| $100.98 | Card | $104.30 | $3.32 |
+| $100.98 | ACH | $101.79 | $0.81 |
+| $0.50 | Card | $0.82 | $0.32 |
+| $1,000.50 | Card | $1,030.69 | $30.19 |
+| $1,000.50 | ACH | $1,005.50 | $5.00 |
 
 ### Decision: card surcharges are not capped by default
 
@@ -237,7 +242,7 @@ composer test    # PHP: the backend
 npm test         # JavaScript: the payment form's behaviour
 ```
 
-**PHP tests** (`tests/Unit`, `tests/Feature`) use an in-memory database, run queued jobs inline and mock Stripe. They cover amount parsing, the fee calculation (including rounding boundaries and the ACH cap), request validation, the idempotent creation of attempts, the Stripe service and job (retries, rejections and partial failures), the status and return pages, and the embedding headers.
+**PHP tests** (`tests/Unit`, `tests/Feature`) use an in-memory database, run queued jobs inline and mock Stripe. They cover amount parsing, the fee calculation (including Stripe's rounded fee, rounding boundaries and the ACH cap), request validation, the idempotent creation of attempts, the Stripe service and job (retries, rejections and partial failures), the status and return pages, and the embedding headers.
 
 **JavaScript tests** (`tests/js`) run [Vitest](https://vitest.dev) in a simulated browser with fake timers and a fake `fetch` and Stripe.js. They cover the debounced live quotes, stale responses being ignored, the idempotency key rules (reuse on a retry of the same details, a new key after a failure or a changed amount), polling and its timeout, mounting and confirming the payment, and the error messages. They use a copy of the form's markup, and `tests/Feature/PaymentFormMarkupTest.php` checks the real template still has every element the script depends on.
 
@@ -261,7 +266,7 @@ Prices an invoice amount for a payment method. Limited to 60 requests per minute
 Response `200`:
 
 ```json
-{ "amount_cents": 100050, "fee_cents": 3020, "total_cents": 103070 }
+{ "amount_cents": 100050, "fee_cents": 3019, "total_cents": 103069 }
 ```
 
 ### `POST /payments/attempts`
@@ -277,7 +282,7 @@ Headers: `Idempotency-Key: <UUID>`, generated per payment attempt by the form.
 Response `202`:
 
 ```json
-{ "id": "01k8…", "state": "pending", "amount_cents": 10098, "fee_cents": 333, "total_cents": 10431 }
+{ "id": "01k8…", "state": "pending", "amount_cents": 10098, "fee_cents": 332, "total_cents": 10430 }
 ```
 
 - The same key with the same details returns the same attempt, so retries and double clicks never create a second payment.
@@ -304,7 +309,7 @@ The page Stripe redirects to after payment. It refreshes the status from Stripe 
 | Path | What it does |
 |---|---|
 | `app/Services/MoneyParser.php` | Turns user-entered dollars into integer cents |
-| `app/Services/FeeCalculator.php` | Calculates the processing fee for card and ACH |
+| `app/Services/FeeCalculator.php` | Calculates the processing fee for card and ACH, aligned to Stripe's rounded fee |
 | `app/Services/PaymentAttemptService.php` | Creates a payment attempt, or returns the existing one for the same idempotency key |
 | `app/Services/StripePaymentService.php` | Creates the PaymentIntent and syncs its status, with the failure handling described above |
 | `app/Jobs/CreateStripePaymentIntent.php` | The queued job: retries, backoff and logging |
@@ -363,6 +368,7 @@ What has been checked, and how, so nothing here is overstated.
 
 **Checked live against a Stripe sandbox**
 - A card payment end to end: attempt saved, worker created the PaymentIntent, payment fields shown, card charged, return page recorded `succeeded`. The payment appears in the Stripe Dashboard with the `Invoice <number>` description and the invoice number, amount, fee and attempt ID in its metadata.
+- Form fee vs Stripe dashboard fee for card and ACH, including $100.00, $100.98, $0.50 (card) and $1,000.50 (card and ACH cap). Charge, processing fee, and net match the table in [Fees](#fees).
 - PaymentIntent creation for both card and ACH, each limited to the method that was quoted, for the correct total.
 - ACH with manually entered bank details: the payment correctly waits for micro-deposit verification, and the return page shows "Verify your bank account" with the deposit date and Stripe's verification link instead of a failure.
 - The iframe embedding rule in a real browser: an allowed origin can embed the page and a disallowed one is blocked.

@@ -48,7 +48,7 @@ let stripe;
 function makeServer() {
     const state = {
         calls: [],
-        polls: [{ state: 'ready', client_secret: 'pi_1_secret', amount_cents: 10098, fee_cents: 333, total_cents: 10431 }],
+        polls: [{ state: 'ready', client_secret: 'pi_1_secret', amount_cents: 10098, fee_cents: 332, total_cents: 10430 }],
         pollIndex: 0,
         create: () => ({ status: 202, body: { id: 'att-1', state: 'pending' } }),
         quote: (payload) => {
@@ -293,14 +293,14 @@ describe('starting a payment', () => {
         await settle(5000);
 
         expect(document.querySelector('[data-payment-type][value="card"]').checked).toBe(true);
-        expect(text('[data-submit-label]')).toBe('Pay $104.31');
+        expect(text('[data-submit-label]')).toBe('Pay $104.30');
     });
 
     it("shows the server's totals on the pay button", async () => {
         await reachPaymentStep();
 
-        expect(text('[data-summary-total]')).toBe('$104.31');
-        expect(text('[data-submit-label]')).toBe('Pay $104.31');
+        expect(text('[data-summary-total]')).toBe('$104.30');
+        expect(text('[data-submit-label]')).toBe('Pay $104.30');
     });
 
     it('uses the bank wording for ACH', async () => {
@@ -351,7 +351,7 @@ describe('starting a payment', () => {
         expect(text('[data-form-error]')).toBe('This is taking longer than expected. Please try again in a moment.');
         expect($('[data-submit]').disabled).toBe(false);
 
-        server.polls = [{ state: 'ready', client_secret: 'pi_1_secret', amount_cents: 10098, fee_cents: 333, total_cents: 10431 }];
+        server.polls = [{ state: 'ready', client_secret: 'pi_1_secret', amount_cents: 10098, fee_cents: 332, total_cents: 10430 }];
         server.pollIndex = 0;
         submit();
         await settle(2000);

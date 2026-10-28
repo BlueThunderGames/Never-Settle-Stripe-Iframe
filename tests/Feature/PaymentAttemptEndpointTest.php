@@ -35,8 +35,8 @@ class PaymentAttemptEndpointTest extends TestCase
         $response = $this->create()->assertStatus(202)
             ->assertJsonPath('state', 'pending')
             ->assertJsonPath('amount_cents', 10098)
-            ->assertJsonPath('fee_cents', 333)
-            ->assertJsonPath('total_cents', 10431)
+            ->assertJsonPath('fee_cents', 332)
+            ->assertJsonPath('total_cents', 10430)
             ->assertJsonMissingPath('client_secret');
 
         $attempt = PaymentAttempt::firstOrFail();
@@ -53,9 +53,9 @@ class PaymentAttemptEndpointTest extends TestCase
 
         // Client-supplied totals are ignored.
         $this->create(['total_cents' => 1, 'fee_cents' => 0, 'amount_cents' => 1])
-            ->assertJsonPath('total_cents', 10431);
+            ->assertJsonPath('total_cents', 10430);
 
-        $this->assertSame(10431, PaymentAttempt::first()->total_cents);
+        $this->assertSame(10430, PaymentAttempt::first()->total_cents);
     }
 
     public function test_the_same_idempotency_key_returns_the_same_attempt(): void

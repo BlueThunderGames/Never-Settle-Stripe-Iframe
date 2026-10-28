@@ -30,15 +30,15 @@ class FeeCalculatorTest extends TestCase
     public static function knownQuotes(): array
     {
         return [
-            'card $100.98 rounds 104.3048 up to 104.31' => [10098, 'card', 333],
-            'card $1,000.50' => [100050, 'card', 3020],
-            'card minimum $0.50' => [50, 'card', 33],
+            'card $100.98 matches Stripe rounding at $104.30' => [10098, 'card', 332],
+            'card $1,000.50' => [100050, 'card', 3019],
+            'card minimum $0.50' => [50, 'card', 32],
             'card total divides exactly, so no extra cent' => [10651, 'card', 349],
-            'ach $100.98 rounds 101.7943 up to 101.80' => [10098, 'ach', 82],
+            'ach $100.98 matches Stripe rounding at $101.79' => [10098, 'ach', 81],
             'ach $100.00' => [10000, 'ach', 81],
             'ach $1,000.50 hits the cap' => [100050, 'ach', 500],
             'ach well past the cap' => [10000000, 'ach', 500],
-            'ach 1 cent rounds up' => [1, 'ach', 1],
+            'ach 1 cent: Stripe percentage rounds to zero' => [1, 'ach', 0],
         ];
     }
 
@@ -51,13 +51,12 @@ class FeeCalculatorTest extends TestCase
             $total = $calculator->quote($amount, $type)['total_cents'];
 
             $stripeFee = $type === 'card'
-                ? (int) round($total * 0.029 + 30)
-                : min((int) round($total * 0.008), 500);
+                ? intdiv($total * 290 + 5000, 10000) + 30
+                : min(intdiv($total * 80 + 5000, 10000), 500);
 
-            // Fee is rounded up, so we may over-collect by a cent but never fall short.
             $net = $total - $stripeFee;
-            $this->assertGreaterThanOrEqual($amount - 1, $net, "{$type} {$amount}");
-            $this->assertLessThanOrEqual($amount + 1, $net, "{$type} {$amount}");
+            $this->assertSame($amount, $net, "{$type} {$amount}");
+            $this->assertSame($stripeFee, $calculator->quote($amount, $type)['fee_cents'], "{$type} {$amount} fee");
         }
     }
 
@@ -79,7 +78,7 @@ class FeeCalculatorTest extends TestCase
 
         $this->assertSame(3001, $capped->quote(100050, 'card')['fee_cents']);
         $this->assertSame(30, $capped->quote(1000, 'card')['fee_cents']);
-        $this->assertSame(7498, $capped->quote(250000, 'card')['fee_cents'], 'ceiling does not bind on large invoices');
+        $this->assertSame(7497, $capped->quote(250000, 'card')['fee_cents'], 'ceiling does not bind on large invoices');
 
         foreach ([...range(1, 5000), 230000, 99999999] as $amount) {
             $this->assertLessThanOrEqual($amount * 0.03, $capped->quote($amount, 'card')['fee_cents'], "card {$amount}");

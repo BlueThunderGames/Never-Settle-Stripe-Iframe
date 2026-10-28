@@ -49,6 +49,7 @@ class FeeCalculator
 
         // total - (total * rate + fixed) = amount  =>  total = (amount + fixed) / (1 - rate)
         $total = $this->ceilDiv(($amountCents + $fixed) * 10000, 10000 - $bps);
+        $total = $this->alignTotal($amountCents, $total, PaymentType::Card);
         $fee = $total - $amountCents;
 
         // Optional ceiling on the surcharge as a share of the invoice; rounded down so it's never exceeded.
@@ -66,10 +67,56 @@ class FeeCalculator
         $bps = $this->basisPoints($this->fees['ach']['percentage']);
 
         // total - total * rate = amount  =>  fee = amount * rate / (1 - rate)
-        $fee = $this->ceilDiv($amountCents * $bps, 10000 - $bps);
+        $total = $amountCents + $this->ceilDiv($amountCents * $bps, 10000 - $bps);
+        $total = $this->alignTotal($amountCents, $total, PaymentType::Ach);
 
         // Once Stripe's cap applies, it takes exactly the cap, so we add exactly the cap.
-        return min($fee, $this->fees['ach']['cap_cents']);
+        return min($total - $amountCents, $this->fees['ach']['cap_cents']);
+    }
+
+    /**
+     * The closed-form ceil can sit one cent above Stripe's rounded fee. Walk the total
+     * so the merchant nets the invoice and the fee we add matches what Stripe will take.
+     */
+    private function alignTotal(int $amountCents, int $total, PaymentType $type): int
+    {
+        while ($total > $amountCents && $this->net($total - 1, $type) >= $amountCents) {
+            $total--;
+        }
+
+        while ($this->net($total, $type) < $amountCents) {
+            $total++;
+        }
+
+        return $total;
+    }
+
+    private function net(int $totalCents, PaymentType $type): int
+    {
+        return $totalCents - $this->stripeFee($totalCents, $type);
+    }
+
+    /**
+     * Stripe's fee on a charge: round-half-up of the percentage, plus the card fixed fee,
+     * ACH capped. Integer cents, same rounding Stripe uses on the dashboard.
+     */
+    private function stripeFee(int $totalCents, PaymentType $type): int
+    {
+        return match ($type) {
+            PaymentType::Card => $this->roundPercent($totalCents, $this->fees['card']['percentage'])
+                + $this->fees['card']['fixed_cents'],
+            PaymentType::Ach => min(
+                $this->roundPercent($totalCents, $this->fees['ach']['percentage']),
+                $this->fees['ach']['cap_cents'],
+            ),
+        };
+    }
+
+    private function roundPercent(int $cents, float $percentage): int
+    {
+        $bps = $this->basisPoints($percentage);
+
+        return intdiv($cents * $bps + 5000, 10000);
     }
 
     // Percentages become integer basis points (2.9% => 290) to keep the math float-free.

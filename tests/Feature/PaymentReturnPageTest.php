@@ -122,7 +122,7 @@ class PaymentReturnPageTest extends TestCase
         $this->get("/payments/return/{$attempt->public_id}")
             ->assertOk()
             ->assertSee('Payment successful')
-            ->assertSee('$104.31')
+            ->assertSee('$104.30')
             ->assertSee('INV-1042')
             ->assertSee('Make another payment')
             ->assertDontSee('Try again');
@@ -138,7 +138,7 @@ class PaymentReturnPageTest extends TestCase
         $this->get("/payments/return/{$attempt->public_id}")
             ->assertOk()
             ->assertSee('Bank payment submitted')
-            ->assertSee('$101.80')
+            ->assertSee('$101.79')
             ->assertSee('a few business days')
             ->assertDontSee('Payment successful');
 

@@ -27,8 +27,8 @@ class PaymentAttemptServiceTest extends TestCase
         $this->assertTrue($attempt->wasRecentlyCreated);
         $this->assertSame('INV-1', $attempt->invoice_number);
         $this->assertSame(10098, $attempt->amount_cents);
-        $this->assertSame(333, $attempt->fee_cents);
-        $this->assertSame(10431, $attempt->total_cents);
+        $this->assertSame(332, $attempt->fee_cents);
+        $this->assertSame(10430, $attempt->total_cents);
         $this->assertSame('usd', $attempt->currency);
         $this->assertSame(PaymentAttemptStatus::Pending, $attempt->status);
         $this->assertSame(PaymentType::Card, $attempt->payment_type);
@@ -40,15 +40,15 @@ class PaymentAttemptServiceTest extends TestCase
         $attempt = $this->service()->findOrCreate('key-enum', 'INV-1', 10098, PaymentType::Ach);
 
         $this->assertSame(PaymentType::Ach, $attempt->fresh()->payment_type);
-        $this->assertSame(10180, $attempt->total_cents);
+        $this->assertSame(10179, $attempt->total_cents);
     }
 
     public function test_it_prices_ach_with_the_ach_rules(): void
     {
         $attempt = $this->service()->findOrCreate('key-ach', 'INV-1', 10098, 'ach');
 
-        $this->assertSame(82, $attempt->fee_cents);
-        $this->assertSame(10180, $attempt->total_cents);
+        $this->assertSame(81, $attempt->fee_cents);
+        $this->assertSame(10179, $attempt->total_cents);
     }
 
     public function test_the_same_key_and_details_return_the_same_attempt(): void

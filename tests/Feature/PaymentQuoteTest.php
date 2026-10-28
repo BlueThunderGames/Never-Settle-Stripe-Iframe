@@ -11,7 +11,7 @@ class PaymentQuoteTest extends TestCase
     {
         $this->postJson('/payments/quote', ['amount' => '1,000.50', 'payment_type' => 'card'])
             ->assertOk()
-            ->assertExactJson(['amount_cents' => 100050, 'fee_cents' => 3020, 'total_cents' => 103070]);
+            ->assertExactJson(['amount_cents' => 100050, 'fee_cents' => 3019, 'total_cents' => 103069]);
     }
 
     public function test_it_applies_the_optional_card_surcharge_ceiling(): void
